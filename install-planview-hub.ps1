@@ -1,7 +1,6 @@
 # install-planview-hub.ps1
 # Installs UiPath Test Manager Integrator Hub (Planview Hub) v25.3.2 on Windows Server 2022.
 # Invoked via Azure CustomScriptExtension from Terraform.
-# Push this file to: https://github.com/lcsfy/TerraformingWithRajesh
 
 $ErrorActionPreference = "Stop"
 $LogFile = "C:\install-planview-hub.log"
@@ -13,74 +12,48 @@ function Log($msg) {
 
 Log "=== Planview Hub install started ==="
 
-# ---------------------------------------------------------------------------
-# 1. Enforce TLS 1.2 for all web requests in this session
-# ---------------------------------------------------------------------------
+# 1. Enforce TLS 1.2
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Log "TLS 1.2 enforced"
 
-# ---------------------------------------------------------------------------
-# 2. Download the Hub MSI
-# ---------------------------------------------------------------------------
+# 2. Download Hub MSI
 $MsiUrl  = "https://download.uipath.com/TestManager/testmanagerconnect/uipath-test-manager-integrator-hub-25.3.2.20250817-b28-windows.msi"
 $MsiPath = "C:\planview-hub.msi"
-
-Log "Downloading Hub MSI from $MsiUrl"
+Log "Downloading Hub MSI..."
 Invoke-WebRequest -Uri $MsiUrl -OutFile $MsiPath -UseBasicParsing
 Log "Download complete: $MsiPath"
 
-# ---------------------------------------------------------------------------
-# 3. Install Hub silently
-#    Hub bundles its own JRE, Keycloak, and embedded PostgreSQL — no separate
-#    prerequisites needed. The installer writes to C:\Tasktop by default.
-# ---------------------------------------------------------------------------
+# 3. Silent install — Hub bundles JRE, Keycloak, and embedded PostgreSQL
 $InstallLog = "C:\planview-hub-install.log"
-Log "Running MSI silent install (this takes a few minutes)..."
-$proc = Start-Process -FilePath "msiexec.exe" `
-    -ArgumentList "/i `"$MsiPath`" /quiet /norestart /log `"$InstallLog`"" `
-    -Wait -PassThru
-
+Log "Running MSI silent install (takes a few minutes)..."
+$args = @("/i", $MsiPath, "/quiet", "/norestart", "/log", $InstallLog)
+$proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $args -Wait -PassThru
 if ($proc.ExitCode -ne 0) {
-    Log "ERROR: msiexec exited with code $($proc.ExitCode). Check $InstallLog for details."
+    Log "ERROR: msiexec exited with code $($proc.ExitCode). See $InstallLog"
     exit $proc.ExitCode
 }
-Log "MSI install completed successfully"
+Log "MSI install complete"
 
-# ---------------------------------------------------------------------------
-# 4. Open Windows Firewall for Hub ports
-#    Port 8080 = Hub HTTP   (default web UI)
-#    Port 8443 = Hub HTTPS  (TLS web UI, self-signed cert bundled by default)
-#    Azure NSG rules are handled in Terraform; these rules cover the OS firewall.
-# ---------------------------------------------------------------------------
-Log "Adding Windows Firewall rules for Hub ports 8080 and 8443"
-
-New-NetFirewallRule -DisplayName "Planview Hub HTTP"  -Direction Inbound `
-    -Protocol TCP -LocalPort 8080 -Action Allow -Profile Any | Out-Null
-
-New-NetFirewallRule -DisplayName "Planview Hub HTTPS" -Direction Inbound `
-    -Protocol TCP -LocalPort 8443 -Action Allow -Profile Any | Out-Null
-
+# 4. Windows Firewall rules (Azure NSG is handled in Terraform)
+Log "Adding firewall rules for ports 8080 and 8443"
+New-NetFirewallRule -DisplayName "Planview Hub HTTP"  -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName "Planview Hub HTTPS" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Any | Out-Null
 Log "Firewall rules created"
 
-# ---------------------------------------------------------------------------
-# 5. Start the Tasktop Hub service (installed by the MSI as "Tasktop Hub")
-# ---------------------------------------------------------------------------
+# 5. Start Tasktop Hub service
 $ServiceName = "Tasktop Hub"
 Log "Starting service: $ServiceName"
-
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($null -eq $svc) {
-    Log "WARNING: Service '$ServiceName' not found. Check MSI install log."
+    Log "WARNING: Service '$ServiceName' not found — check MSI install log"
 } else {
     Start-Service -Name $ServiceName
     Log "Service started"
 }
 
-# ---------------------------------------------------------------------------
-# 6. Wait for Hub to become reachable on port 8080
-# ---------------------------------------------------------------------------
-Log "Waiting for Hub to respond on http://localhost:8080 ..."
-$MaxWait  = 120   # seconds
+# 6. Wait for Hub to respond on port 8080
+Log "Waiting for Hub on http://localhost:8080 ..."
+$MaxWait  = 120
 $Interval = 10
 $Elapsed  = 0
 $Ready    = $false
@@ -95,33 +68,18 @@ while ($Elapsed -lt $MaxWait) {
             break
         }
     } catch {
-        # not up yet, keep waiting
+        Log "  ...not up yet ($Elapsed s elapsed)"
     }
-    Log "  ...still waiting ($Elapsed s elapsed)"
 }
 
 if ($Ready) {
-    Log "Hub is responding on port 8080 — installation complete."
+    Log "Hub is responding on port 8080 — install complete."
 } else {
-    Log "WARNING: Hub did not respond within $MaxWait seconds. It may still be starting up."
-    Log "Check service status and C:\Tasktop\logs for details."
+    Log "WARNING: Hub did not respond within $MaxWait s. Check C:\Tasktop\logs."
 }
 
-# ---------------------------------------------------------------------------
-# Notes for first login
-# ---------------------------------------------------------------------------
-# Default credentials:  root / Tasktop123
-# Change the root password immediately after first login.
-# HTTP UI:   http://<public-ip>:8080
-# HTTPS UI:  https://<public-ip>:8443  (self-signed cert — expect browser warning)
-#
-# The embedded PostgreSQL database is used by default.
-# For production use, point Hub at an external PostgreSQL instance via
-# the Hub admin UI under Settings > Database.
-#
-# To replace the self-signed SSL certificate, drop your PEM files into
-# C:\Tasktop\conf and update the keystore reference in server.xml,
-# then restart the Tasktop Hub service.
-# ---------------------------------------------------------------------------
+# Default credentials: root / Tasktop123
+# HTTP:  http://<public-ip>:8080
+# HTTPS: https://<public-ip>:8443  (self-signed cert — expect browser warning)
 
 Log "=== install-planview-hub.ps1 finished ==="
