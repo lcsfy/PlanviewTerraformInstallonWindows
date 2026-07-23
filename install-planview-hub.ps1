@@ -24,13 +24,13 @@ Log "Downloading Hub MSI..."
 Invoke-WebRequest -Uri $MsiUrl -OutFile $MsiPath -UseBasicParsing
 Log "Download complete"
 
-# 3. Silent MSI install — Hub bundles JRE, Keycloak, and embedded Derby database
+# 3. Silent MSI install - Hub bundles JRE, Keycloak, and embedded Derby database
 $InstallLog = "C:\planview-hub-install.log"
 Log "Running MSI silent install (this takes several minutes)..."
 $msiArgs = @("/i", $MsiPath, "/quiet", "/norestart", "/log", $InstallLog)
 $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
 if ($proc.ExitCode -ne 0) {
-    Log "ERROR: msiexec exited with code $($proc.ExitCode) — see $InstallLog"
+    Log "ERROR: msiexec exited with code $($proc.ExitCode) - see $InstallLog"
     exit $proc.ExitCode
 }
 Log "MSI install complete"
@@ -64,13 +64,18 @@ $keytoolArgs = @(
 & $keytool @keytoolArgs 2>&1 | Out-Null
 Log "Certificate generated with SAN: localhost, 127.0.0.1, $publicIP"
 
+# Export the cert in DER format so it can be downloaded and added to trusted certs on client machines
+$certExportPath = "C:\planview-hub.cer"
+& $keytool -exportcert -alias tasktop -keystore $keystorePath -storepass changeit -file $certExportPath 2>&1 | Out-Null
+Log "Certificate exported to $certExportPath - download via RDP and add to trusted certs on your machine to use HTTPS without warnings"
+
 # 5. Windows Firewall rules (Azure NSG rules for the same ports are in Terraform)
 Log "Adding Windows Firewall rules..."
 New-NetFirewallRule -DisplayName "Planview Hub HTTP"  -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Any | Out-Null
 New-NetFirewallRule -DisplayName "Planview Hub HTTPS" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Any | Out-Null
 Log "Firewall rules created"
 
-# 6. Start both services — MSI registers them but does NOT start them automatically
+# 6. Start both services - MSI registers them but does NOT start them automatically
 Log "Starting Tasktop service..."
 Start-Service -Name "Tasktop"
 Log "Starting Keycloak service..."
@@ -133,7 +138,8 @@ while ($Elapsed -lt 120) {
 
 if ($HubReady) {
     Log "Hub is up and accessible."
-    Log "URL: http://$publicIP:8080"
+    Log "HTTP:  http://$publicIP:8080"
+    Log "HTTPS: https://$publicIP:8443  (trust C:\planview-hub.cer on your client to avoid browser warnings)"
     Log "Default credentials: root / Tasktop123 (change after first login)"
 } else {
     Log "WARNING: Hub did not respond on port 8080 within 120s. Check C:\ProgramData\Tasktop\logs\"
