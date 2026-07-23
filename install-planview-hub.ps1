@@ -68,7 +68,7 @@ while ($Elapsed -lt $MaxWait) {
             break
         }
     } catch {
-        Log "  ...not up yet ($($Elapsed) s elapsed)"
+        Log "  ...not up yet - $($Elapsed)s elapsed"
     }
 }
 
